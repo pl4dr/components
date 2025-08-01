@@ -142,7 +142,7 @@ class PDFLoader {
   }
 }
 
-const PAGE_SCALE = 4
+const PAGE_SCALE = 2
 const PAGE_GAP = 24
 
 function PDFView<ContainerRef extends HTMLElement>(props: {
@@ -166,6 +166,7 @@ function PDFView<ContainerRef extends HTMLElement>(props: {
     pagePositions: [] as ReturnType<PDFLoader['calculatePagePositions']>,
   })
   const loaderRef = useRef<PDFLoader>(null)
+  const wheelEndTimeoutRef = useRef<NodeJS.Timeout | null>(null)
 
   useEffect(() => {
     if (viewportState.dominantPageWidth === 0) return
@@ -230,11 +231,13 @@ function PDFView<ContainerRef extends HTMLElement>(props: {
   function handleWheel(e: Konva.KonvaEventObject<WheelEvent>) {
     e.evt.preventDefault()
 
+    const stage = e.currentTarget as Konva.Stage
+
     const deltaY = e.evt.deltaY
     const deltaX = e.evt.deltaX
     const direction = e.evt.deltaY > 0 ? -1 : 1
     const zoomBy = e.evt.ctrlKey || e.evt.metaKey ? 1.03 : 1
-    const pointer = (e.currentTarget as Konva.Stage).getPointerPosition()!
+    const pointer = stage.getPointerPosition()!
 
     setViewportState((state) => {
       if (zoomBy !== 1) {
@@ -244,6 +247,15 @@ function PDFView<ContainerRef extends HTMLElement>(props: {
             : Math.max(state.scale / zoomBy, 0.25)
         const mousePointToY = (pointer.y - state.y) / state.scale
         const newY = pointer.y - mousePointToY * newScale
+
+        // stage.position({
+        //   y: newY,
+        //   x: direction > 0 ? state.x : 0,
+        // })
+        // stage.scale({
+        //   x: newScale,
+        //   y: newScale,
+        // })
 
         return {
           ...state,
@@ -292,12 +304,26 @@ function PDFView<ContainerRef extends HTMLElement>(props: {
         if (newX < -maxX) newX = -maxX
       }
 
+      // stage.position({
+      //   x: newX,
+      //   y: newY,
+      // })
+
       return {
         ...state,
         y: newY,
         x: newX,
       }
     })
+
+    if (wheelEndTimeoutRef.current !== null) {
+      clearTimeout(wheelEndTimeoutRef.current)
+    }
+
+    wheelEndTimeoutRef.current = setTimeout(() => {
+      const evt = new CustomEvent('PDFView/requestPageCandidates')
+      window.dispatchEvent(evt)
+    }, 150)
   }
 
   // NOTE: temporary loading state
@@ -305,36 +331,46 @@ function PDFView<ContainerRef extends HTMLElement>(props: {
     return <div>Loading...</div>
   }
 
+  const buffer = 2 * viewportState.height
+  const visiblePages = viewportState.pagePositions.filter((pos) => {
+    const pageTop = pos.position.y * viewportState.scale
+    const pageBottom = pageTop + pos.dimensions.height * viewportState.scale
+    const viewportTop = -viewportState.y
+    const viewportBottom = viewportTop + viewportState.height
+
+    return (
+      pageBottom >= viewportTop - buffer && pageTop <= viewportBottom + buffer
+    )
+  })
+
   return (
     <>
       <Stage
         scaleX={viewportState.scale}
         scaleY={viewportState.scale}
-        onWheel={handleWheel}
         x={viewportState.x}
         y={viewportState.y}
+        onWheel={handleWheel}
         width={viewportState.width}
         height={viewportState.height}
         className={cn('overflow-hidden')}>
         <Layer>
-          {viewportState.pagePositions.map(
-            ({ pageNumber, dimensions, position }) => {
-              return (
-                <PDFPage
-                  key={pageNumber}
-                  loaderRef={loaderRef}
-                  pageNumber={pageNumber}
-                  dimensions={dimensions}
-                  position={position}
-                />
-              )
-            },
-          )}
+          {visiblePages.map(({ pageNumber, dimensions, position }) => {
+            return (
+              <PDFPage
+                key={pageNumber}
+                loaderRef={loaderRef}
+                pageNumber={pageNumber}
+                dimensions={dimensions}
+                position={position}
+              />
+            )
+          })}
         </Layer>
       </Stage>
-      <div className="absolute top-0 left-0">
+      {/* <div className="absolute top-0 left-0">
         Y: {viewportState.y}. X: {viewportState.x}. Z: {viewportState.scale}
-      </div>
+      </div> */}
     </>
   )
 }
@@ -348,7 +384,14 @@ function PDFPage(props: {
     y: number
   }
 }) {
+  const groupRef = useRef<Konva.Group>(null)
   const [image, setImage] = useState<HTMLCanvasElement | undefined>(undefined)
+
+  useEffect(() => {
+    if (groupRef.current) {
+      groupRef.current.cache()
+    }
+  }, [image])
 
   useEffect(
     function loadPage() {
@@ -369,10 +412,33 @@ function PDFPage(props: {
     [props.pageNumber],
   )
 
+  useEffect(function handleCandidateRequest() {
+    const controller = new AbortController()
+
+    window.addEventListener(
+      'PDFView/handleRequestPositionsEvent',
+      () => {
+        if (groupRef.current === null) return
+
+        const group = groupRef.current
+
+        console.log('Page', group.id(), 'rendered', group.position())
+      },
+      {
+        signal: controller.signal,
+      },
+    )
+
+    return () => {
+      controller.abort()
+    }
+  }, [])
+
   return (
     <Group
       {...props.position}
       {...props.dimensions}
+      ref={groupRef}
       id={`page-${props.pageNumber}`}>
       {!image && (
         <Rect
