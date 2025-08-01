@@ -9,7 +9,7 @@ export default function PDFViewer() {
   return (
     <div
       ref={divRef}
-      className="h-[800px] w-[90vw] overflow-hidden rounded-sm border border-slate-300 bg-white">
+      className="relative h-[800px] w-[90vw] overflow-hidden rounded-sm border border-slate-300 bg-white">
       <PDFView src="http://localhost:3000/sample.pdf" containerRef={divRef} />
     </div>
   )
