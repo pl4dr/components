@@ -1,7 +1,15 @@
+'use client'
+
+import dynamic from 'next/dynamic'
+
+const PDFViewer = dynamic(() => import('@/app/pdf-viewer'), {
+  ssr: false,
+})
+
 export default function Home() {
   return (
-    <main>
-      <h1>Hello World</h1>
+    <main className="grid h-screen place-content-center">
+      <PDFViewer />
     </main>
   )
 }

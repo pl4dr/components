@@ -1,6 +1,6 @@
 {
   "name": "pdf-view",
-  "version": "0.1.0",
+  "version": "0.0.0",
   "type": "module",
   "private": true,
   "scripts": {
@@ -8,18 +8,23 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
-    "format": "prettier --write ."
+    "format": "prettier --write .",
+    "registry:build": "shadcn build"
   },
   "dependencies": {
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
+    "konva": "^9.3.22",
     "lucide-react": "^0.535.0",
     "next": "15.4.5",
+    "pdfjs-dist": "^5.4.54",
     "prettier": "^3.6.2",
     "prettier-plugin-organize-imports": "^4.2.0",
     "prettier-plugin-tailwindcss": "^0.6.14",
     "react": "19.1.0",
     "react-dom": "19.1.0",
+    "react-konva": "^19.0.7",
+    "shadcn": "2.9.3-canary.0",
     "tailwind-merge": "^3.3.1"
   },
   "devDependencies": {

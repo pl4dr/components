@@ -1,0 +1,24 @@
+{
+  "$schema": "https://ui.shadcn.com/schema/registry.json",
+  "name": "PDF View",
+  "homepage": "https://github.com/pl4dr/pdf-view",
+  "items": [
+    {
+      "name": "pdf-view",
+      "type": "registry:ui",
+      "title": "PDF View",
+      "description": "PDFV Viewer component",
+      "dependencies": [
+        "konva",
+        "react-konva",
+        "pdfjs-dist"
+      ],
+      "files": [
+        {
+          "path": "src/registry/pdf-view/pdf-view.tsx",
+          "type": "registry:ui"
+        }
+      ]
+    }
+  ]
+}
