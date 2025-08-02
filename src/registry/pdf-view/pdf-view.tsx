@@ -7,8 +7,8 @@ import type {
   DocumentInitParameters,
   TypedArray,
 } from 'pdfjs-dist/types/src/display/api'
-import React, { useEffect, useRef, useState } from 'react'
-import { Group, Image, Layer, Rect, Stage, Text } from 'react-konva'
+import React, { useCallback, useEffect, useRef, useState } from 'react'
+import { FastLayer, Group, Image, Rect, Stage, Text } from 'react-konva'
 
 pdfjs.GlobalWorkerOptions.workerSrc = new URL(
   'pdfjs-dist/build/pdf.worker.min.mjs',
@@ -70,7 +70,6 @@ class PDFLoader {
     dominantPageWidth: number
     viewportWidth: number
     pageGap: number
-    scale: number
   }) {
     const { pageDimensions, dominantPageWidth, viewportWidth, pageGap } = opts
     let prevPageHeight = pageGap
@@ -97,7 +96,7 @@ class PDFLoader {
             height: scaledPageHeight,
           },
           position: {
-            x: viewportWidth / opts.scale / 2 - scaledPageWidth / 2,
+            x: viewportWidth / 2 - scaledPageWidth / 2,
             y: yPosition,
           },
         }
@@ -142,8 +141,8 @@ class PDFLoader {
   }
 }
 
-const PAGE_SCALE = 2
-const PAGE_GAP = 24
+const PDF_PAGE_LOAD_SCALE = 2
+const GAP_BETWEEN_PAGES_ON_CANVAS = 24
 
 function PDFView<ContainerRef extends HTMLElement>(props: {
   src: string
@@ -161,35 +160,10 @@ function PDFView<ContainerRef extends HTMLElement>(props: {
     x: 0,
     y: 0,
 
-    pageDimensions: new Map<number, { width: number; height: number }>(),
-    dominantPageWidth: 0,
     pagePositions: [] as ReturnType<PDFLoader['calculatePagePositions']>,
   })
   const loaderRef = useRef<PDFLoader>(null)
   const wheelEndTimeoutRef = useRef<NodeJS.Timeout | null>(null)
-
-  useEffect(() => {
-    if (viewportState.dominantPageWidth === 0) return
-    if (viewportState.width === 0) return
-
-    const pagePositions = loaderRef.current?.calculatePagePositions({
-      pageDimensions: viewportState.pageDimensions,
-      dominantPageWidth: viewportState.dominantPageWidth,
-      viewportWidth: viewportState.width,
-      pageGap: PAGE_GAP,
-      scale: viewportState.scale,
-    })
-
-    setViewportState((prev) => ({
-      ...prev,
-      pagePositions: pagePositions ?? [],
-    }))
-  }, [
-    viewportState.scale,
-    viewportState.dominantPageWidth,
-    viewportState.width,
-    viewportState.pageDimensions,
-  ])
 
   useEffect(
     function loadDocumentAndPages() {
@@ -206,13 +180,20 @@ function PDFView<ContainerRef extends HTMLElement>(props: {
       const loader = new PDFLoader()
 
       loader
-        .load(props.src, PAGE_SCALE)
+        .load(props.src, PDF_PAGE_LOAD_SCALE)
         .then(({ dominantPageWidth, pageDimensions }) => {
           setStatus('success')
+
+          const pagePositions = loader.calculatePagePositions({
+            pageDimensions,
+            dominantPageWidth,
+            viewportWidth: rect.width,
+            pageGap: GAP_BETWEEN_PAGES_ON_CANVAS,
+          })
+
           setViewportState((prev) => ({
             ...prev,
-            dominantPageWidth,
-            pageDimensions,
+            pagePositions,
           }))
         })
         .catch((e) => {
@@ -227,6 +208,37 @@ function PDFView<ContainerRef extends HTMLElement>(props: {
     },
     [props.src],
   )
+
+  const setViewportScale = useCallback((scale: number) => {
+    setViewportState((state) => {
+      const centerX1 = state.width / 2
+      const centerXs = (state.width * scale) / 2
+      const diff = Math.abs(centerX1 - centerXs)
+      const piv = centerX1 > centerXs ? 1 : -1
+
+      return {
+        ...state,
+        x: diff * piv,
+        scale: scale,
+      }
+    })
+  }, [])
+
+  const goToPage = useCallback((pageNumber: number) => {
+    setViewportState((viewportState) => {
+      const targetPagePos = viewportState.pagePositions.find(
+        (pos) => pos.pageNumber === pageNumber,
+      )
+      if (targetPagePos === undefined) return viewportState
+
+      const targetY = targetPagePos.position.y * viewportState.scale - GAP_BETWEEN_PAGES_ON_CANVAS
+
+      return {
+        ...viewportState,
+        y: -targetY,
+      }
+    })
+  }, [])
 
   function handleWheel(e: Konva.KonvaEventObject<WheelEvent>) {
     e.evt.preventDefault()
@@ -248,19 +260,15 @@ function PDFView<ContainerRef extends HTMLElement>(props: {
         const mousePointToY = (pointer.y - state.y) / state.scale
         const newY = pointer.y - mousePointToY * newScale
 
-        // stage.position({
-        //   y: newY,
-        //   x: direction > 0 ? state.x : 0,
-        // })
-        // stage.scale({
-        //   x: newScale,
-        //   y: newScale,
-        // })
+        const centerX1 = viewportState.width / 2
+        const centerXs = (viewportState.width * newScale) / 2
+        const diff = Math.abs(centerX1 - centerXs)
+        const piv = centerX1 > centerXs ? 1 : -1
 
         return {
           ...state,
           y: newY,
-          x: direction > 0 ? state.x : 0,
+          x: diff * piv,
           scale: newScale,
         }
       }
@@ -275,9 +283,9 @@ function PDFView<ContainerRef extends HTMLElement>(props: {
       const maxY =
         lastPageY +
         (lastPageHeight > state.height ? lastPageHeight - state.height : 0) +
-        PAGE_GAP * 2
+        GAP_BETWEEN_PAGES_ON_CANVAS * 2
 
-      if (newY > PAGE_GAP * scale) newY = PAGE_GAP * scale
+      if (newY > GAP_BETWEEN_PAGES_ON_CANVAS * scale) newY = GAP_BETWEEN_PAGES_ON_CANVAS * scale
       if (newY < -maxY) newY = -maxY
 
       let largestPagePos = state.pagePositions[0]
@@ -294,20 +302,15 @@ function PDFView<ContainerRef extends HTMLElement>(props: {
       } else {
         const largestPageX = largestPagePos.position.x * scale
         const maxX =
-          largestPageX + largestPageWidth - state.width + PAGE_GAP * 2
+          largestPageX + largestPageWidth - state.width + GAP_BETWEEN_PAGES_ON_CANVAS * 2
 
         const extraX =
           largestPageWidth > state.width ? largestPageWidth - state.width : 0
-        const minX = extraX / 2 + PAGE_GAP * 2
+        const minX = extraX / 2 + GAP_BETWEEN_PAGES_ON_CANVAS * 2
 
         if (newX > minX) newX = minX
         if (newX < -maxX) newX = -maxX
       }
-
-      // stage.position({
-      //   x: newX,
-      //   y: newY,
-      // })
 
       return {
         ...state,
@@ -354,7 +357,7 @@ function PDFView<ContainerRef extends HTMLElement>(props: {
         width={viewportState.width}
         height={viewportState.height}
         className={cn('overflow-hidden')}>
-        <Layer>
+        <FastLayer>
           {visiblePages.map(({ pageNumber, dimensions, position }) => {
             return (
               <PDFPage
@@ -366,11 +369,11 @@ function PDFView<ContainerRef extends HTMLElement>(props: {
               />
             )
           })}
-        </Layer>
+        </FastLayer>
       </Stage>
-      {/* <div className="absolute top-0 left-0">
+      <div className="absolute top-0 left-0">
         Y: {viewportState.y}. X: {viewportState.x}. Z: {viewportState.scale}
-      </div> */}
+      </div>
     </>
   )
 }
@@ -387,12 +390,6 @@ function PDFPage(props: {
   const groupRef = useRef<Konva.Group>(null)
   const [image, setImage] = useState<HTMLCanvasElement | undefined>(undefined)
 
-  useEffect(() => {
-    if (groupRef.current) {
-      groupRef.current.cache()
-    }
-  }, [image])
-
   useEffect(
     function loadPage() {
       const loader = props.loaderRef.current
@@ -400,7 +397,7 @@ function PDFPage(props: {
 
       setTimeout(() => {
         loader
-          .loadPage(props.pageNumber, PAGE_SCALE)
+          .loadPage(props.pageNumber, PDF_PAGE_LOAD_SCALE)
           .then(({ canvas }) => {
             setImage(canvas)
           })
@@ -435,11 +432,7 @@ function PDFPage(props: {
   }, [])
 
   return (
-    <Group
-      {...props.position}
-      {...props.dimensions}
-      ref={groupRef}
-      id={`page-${props.pageNumber}`}>
+    <Group {...props.position} ref={groupRef}>
       {!image && (
         <Rect
           {...props.dimensions}
