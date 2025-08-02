@@ -1,7 +1,7 @@
 'use client'
 
 import { cn } from '@/lib/utils'
-import Konva from 'konva'
+import type Konva from 'konva'
 import * as pdfjs from 'pdfjs-dist'
 import type {
   DocumentInitParameters,
@@ -440,6 +440,7 @@ function PDFView<ContainerRef extends HTMLElement>(props: {
         loaderRef.current?.dispose()
       }
     },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     [props.src],
   )
 
@@ -560,6 +561,7 @@ function PDFPage(props: {
           })
       }, 300)
     },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     [props.pageNumber],
   )
 
@@ -579,6 +581,7 @@ function PDFPage(props: {
           image={image}
           stroke={'#e5e5e5'}
           strokeWidth={1}
+          alt={`Page ${props.pageNumber}`}
         />
       )}
     </Group>

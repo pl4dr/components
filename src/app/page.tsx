@@ -1,10 +1,4 @@
-'use client'
-
-import dynamic from 'next/dynamic'
-
-const PDFViewer = dynamic(() => import('@/app/pdf-viewer'), {
-  ssr: false,
-})
+import { PDFViewer } from '@/app/pdf-viewer-nossr'
 
 export default function Home() {
   return (
