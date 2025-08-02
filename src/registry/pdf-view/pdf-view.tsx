@@ -141,6 +141,109 @@ class PDFLoader {
   }
 }
 
+function calculateYClamping(
+  inputY: number,
+  state: {
+    scale: number
+    pagePositions: ReturnType<PDFLoader['calculatePagePositions']>
+    height: number
+  },
+) {
+  let newY = inputY
+  const scale = state.scale
+  if (newY > GAP_BETWEEN_PAGES_ON_CANVAS * scale)
+    newY = GAP_BETWEEN_PAGES_ON_CANVAS * scale
+
+  // bottom bounds
+  const lastPagePos = state.pagePositions[state.pagePositions.length - 1]
+  const lastPageHeight = lastPagePos.dimensions.height * scale
+  const lastPageY = lastPagePos.position.y * scale
+  const totalDocHeight = lastPageY + lastPageHeight
+  const maxY =
+    totalDocHeight - state.height + GAP_BETWEEN_PAGES_ON_CANVAS * scale * 2
+  if (newY < -maxY) newY = -maxY
+
+  return newY
+}
+
+function calculateXClamping(
+  inputX: number,
+  state: {
+    scale: number
+    pagePositions: ReturnType<PDFLoader['calculatePagePositions']>
+    width: number
+    height: number
+    x: number
+  },
+) {
+  const scale = state.scale
+
+  let newX = inputX
+  let largestPagePos = state.pagePositions[0]
+  for (const pagePos of state.pagePositions) {
+    if (pagePos.dimensions.width > largestPagePos.dimensions.width) {
+      largestPagePos = pagePos
+    }
+  }
+
+  const largestPageWidth = largestPagePos.dimensions.width * scale
+  const largestPageX = largestPagePos.position.x * scale
+
+  const docLeft = largestPageX
+  const docRight = largestPageX + largestPageWidth
+
+  if (largestPageWidth <= state.width) {
+    newX = state.x
+  } else {
+    const padding = GAP_BETWEEN_PAGES_ON_CANVAS * scale
+
+    const maxX = padding - docLeft
+    const minX = state.width - docRight - padding
+
+    if (newX > maxX) newX = maxX
+    if (newX < minX) newX = minX
+  }
+
+  return newX
+}
+
+function findClosestPage(state: {
+  currentPage: number
+  pagePositions: ReturnType<PDFLoader['calculatePagePositions']>
+  y: number
+  height: number
+  scale: number
+}) {
+  let closestPage = state.currentPage
+  let closestDistance = Infinity
+
+  const viewportTop = -state.y
+  const viewportCenter = viewportTop + state.height / 2
+
+  state.pagePositions.forEach((pos) => {
+    const pageTop = pos.position.y * state.scale
+    const pageBottom = pageTop + pos.dimensions.height * state.scale
+    const pageCenter = (pageTop + pageBottom) / 2
+
+    const distance = Math.abs(pageCenter - viewportCenter)
+    if (distance < closestDistance) {
+      closestDistance = distance
+      closestPage = pos.pageNumber
+    }
+  })
+
+  return closestPage
+}
+
+function calculateXForScale(width: number, scale: number) {
+  const centerXOriginal = width / 2
+  const centerXScaled = (width * scale) / 2
+  const diff = Math.abs(centerXOriginal - centerXScaled)
+  const newX = diff * (centerXOriginal > centerXScaled ? 1 : -1)
+
+  return newX
+}
+
 const PDF_PAGE_LOAD_SCALE = 2
 const GAP_BETWEEN_PAGES_ON_CANVAS = 24
 const ZOOM_BY_FACTOR = 1.05
@@ -149,10 +252,9 @@ function PDFView<ContainerRef extends HTMLElement>(props: {
   src: string
   containerRef: React.RefObject<ContainerRef | null>
 }) {
-  const [status, setStatus] = useState(
-    'loading' as 'loading' | 'success' | 'error',
-  )
-  const [viewportState, setViewportState] = useState({
+  const [state, setState] = useState({
+    status: 'loading' as 'loading' | 'success' | 'error',
+
     scale: 1,
 
     width: 0,
@@ -182,7 +284,7 @@ function PDFView<ContainerRef extends HTMLElement>(props: {
 
       const container = props.containerRef.current
       const rect = container.getBoundingClientRect()
-      setViewportState((prev) => ({
+      setState((prev) => ({
         ...prev,
         width: rect.width,
         height: rect.height,
@@ -193,8 +295,6 @@ function PDFView<ContainerRef extends HTMLElement>(props: {
       loader
         .load(props.src, PDF_PAGE_LOAD_SCALE)
         .then(({ pdf, dominantPageWidth, pageDimensions }) => {
-          setStatus('success')
-
           const pagePositions = loader.calculatePagePositions({
             pageDimensions,
             dominantPageWidth,
@@ -202,8 +302,9 @@ function PDFView<ContainerRef extends HTMLElement>(props: {
             pageGap: GAP_BETWEEN_PAGES_ON_CANVAS,
           })
 
-          setViewportState((prev) => ({
+          setState((prev) => ({
             ...prev,
+            status: 'success',
             dominantPageWidth,
             pageDimensions,
             pagePositions,
@@ -211,7 +312,10 @@ function PDFView<ContainerRef extends HTMLElement>(props: {
           }))
         })
         .catch((e) => {
-          setStatus('error')
+          setState((prev) => ({
+            ...prev,
+            status: 'error',
+          }))
           console.error('[PDFView] Failed to load document. Cause:', e)
         })
       loaderRef.current = loader
@@ -225,7 +329,7 @@ function PDFView<ContainerRef extends HTMLElement>(props: {
           clearTimeout(updatViewportDimensionsTimer)
         }
         updatViewportDimensionsTimer = setTimeout(() => {
-          setViewportState((prev) => {
+          setState((prev) => {
             if (prev.dominantPageWidth === 0) return prev
 
             const pagePositions = loader.calculatePagePositions({
@@ -256,22 +360,19 @@ function PDFView<ContainerRef extends HTMLElement>(props: {
   )
 
   const setViewportScale = useCallback((scale: number) => {
-    setViewportState((state) => {
-      const centerX1 = state.width / 2
-      const centerXs = (state.width * scale) / 2
-      const diff = Math.abs(centerX1 - centerXs)
-      const piv = centerX1 > centerXs ? 1 : -1
+    setState((state) => {
+      const newX = calculateXForScale(state.width, scale)
 
       return {
         ...state,
-        x: diff * piv,
+        x: newX,
         scale: scale,
       }
     })
   }, [])
 
   const goToPage = useCallback((pageNumber: number) => {
-    setViewportState((viewportState) => {
+    setState((viewportState) => {
       const targetPagePos = viewportState.pagePositions.find(
         (pos) => pos.pageNumber === pageNumber,
       )
@@ -300,119 +401,31 @@ function PDFView<ContainerRef extends HTMLElement>(props: {
     const zoomBy = e.evt.ctrlKey || e.evt.metaKey ? ZOOM_BY_FACTOR : 1
     const pointer = stage.getPointerPosition()!
 
-    setViewportState((state) => {
+    setState((state) => {
       if (zoomBy !== 1) {
         const newScale =
           direction > 0
             ? Math.min(state.scale * zoomBy, 3)
             : Math.max(state.scale / zoomBy, 0.25)
         const mousePointToY = (pointer.y - state.y) / state.scale
-        let newY = pointer.y - mousePointToY * newScale
 
-        const centerX1 = viewportState.width / 2
-        const centerXs = (viewportState.width * newScale) / 2
-        const diff = Math.abs(centerX1 - centerXs)
-        const piv = centerX1 > centerXs ? 1 : -1
-
-        // newY bounds logic
-        {
-          // top bounds
-          if (newY > GAP_BETWEEN_PAGES_ON_CANVAS * newScale)
-            newY = GAP_BETWEEN_PAGES_ON_CANVAS * newScale
-
-          // bottom bounds
-          const lastPagePos =
-            state.pagePositions[state.pagePositions.length - 1]
-          const lastPageHeight = lastPagePos.dimensions.height * newScale
-          const lastPageY = lastPagePos.position.y * newScale
-          const totalDocHeight = lastPageY + lastPageHeight
-          const maxY =
-            totalDocHeight -
-            state.height +
-            GAP_BETWEEN_PAGES_ON_CANVAS * newScale * 2
-
-          if (newY < -maxY) newY = -maxY
-        }
+        const newX = calculateXForScale(state.width, newScale)
+        const newY = calculateYClamping(pointer.y - mousePointToY * newScale, {
+          ...state,
+          scale: newScale,
+        })
 
         return {
           ...state,
           y: newY,
-          x: diff * piv,
+          x: newX,
           scale: newScale,
         }
       }
 
-      let closestPage = state.currentPage
-      {
-        let closestDistance = Infinity
-
-        const viewportTop = -state.y
-        const viewportCenter = viewportTop + state.height / 2
-
-        state.pagePositions.forEach((pos) => {
-          const pageTop = pos.position.y * state.scale
-          const pageBottom = pageTop + pos.dimensions.height * state.scale
-          const pageCenter = (pageTop + pageBottom) / 2
-
-          const distance = Math.abs(pageCenter - viewportCenter)
-          if (distance < closestDistance) {
-            closestDistance = distance
-            closestPage = pos.pageNumber
-          }
-        })
-      }
-
-      let newY = state.y - deltaY
-      let newX = state.x - deltaX
-      const scale = state.scale
-
-      // newY bounds logic
-      {
-        // top bounds
-        if (newY > GAP_BETWEEN_PAGES_ON_CANVAS * scale)
-          newY = GAP_BETWEEN_PAGES_ON_CANVAS * scale
-
-        // bottom bounds
-        const lastPagePos = state.pagePositions[state.pagePositions.length - 1]
-        const lastPageHeight = lastPagePos.dimensions.height * scale
-        const lastPageY = lastPagePos.position.y * scale
-        const totalDocHeight = lastPageY + lastPageHeight
-        const maxY =
-          totalDocHeight -
-          state.height +
-          GAP_BETWEEN_PAGES_ON_CANVAS * scale * 2
-        if (newY < -maxY) newY = -maxY
-      }
-
-      // newX bounds logic
-      {
-        let largestPagePos = state.pagePositions[0]
-        for (const pagePos of state.pagePositions) {
-          if (pagePos.dimensions.width > largestPagePos.dimensions.width) {
-            largestPagePos = pagePos
-          }
-        }
-
-        const largestPageWidth = largestPagePos.dimensions.width * scale
-
-        if (largestPageWidth < state.width) {
-          newX = state.x
-        } else {
-          const largestPageX = largestPagePos.position.x * scale
-          const maxX =
-            largestPageX +
-            largestPageWidth -
-            state.width +
-            GAP_BETWEEN_PAGES_ON_CANVAS * 2
-
-          const extraX =
-            largestPageWidth > state.width ? largestPageWidth - state.width : 0
-          const minX = extraX / 2 + GAP_BETWEEN_PAGES_ON_CANVAS * 2
-
-          if (newX > minX) newX = minX
-          if (newX < -maxX) newX = -maxX
-        }
-      }
+      const closestPage = findClosestPage(state)
+      const newY = calculateYClamping(state.y - deltaY, state)
+      const newX = calculateXClamping(state.x - deltaX, state)
 
       return {
         ...state,
@@ -423,17 +436,16 @@ function PDFView<ContainerRef extends HTMLElement>(props: {
     })
   }
 
-  // NOTE: temporary loading state
-  if (status === 'loading') {
+  if (state.status === 'loading') {
     return null
   }
 
-  const buffer = 2 * viewportState.height
-  const visiblePages = viewportState.pagePositions.filter((pos) => {
-    const pageTop = pos.position.y * viewportState.scale
-    const pageBottom = pageTop + pos.dimensions.height * viewportState.scale
-    const viewportTop = -viewportState.y
-    const viewportBottom = viewportTop + viewportState.height
+  const buffer = 2 * state.height
+  const visiblePages = state.pagePositions.filter((pos) => {
+    const pageTop = pos.position.y * state.scale
+    const pageBottom = pageTop + pos.dimensions.height * state.scale
+    const viewportTop = -state.y
+    const viewportBottom = viewportTop + state.height
 
     return (
       pageBottom >= viewportTop - buffer && pageTop <= viewportBottom + buffer
@@ -443,13 +455,13 @@ function PDFView<ContainerRef extends HTMLElement>(props: {
   return (
     <>
       <Stage
-        scaleX={viewportState.scale}
-        scaleY={viewportState.scale}
-        x={viewportState.x}
-        y={viewportState.y}
+        scaleX={state.scale}
+        scaleY={state.scale}
+        x={state.x}
+        y={state.y}
         onWheel={handleWheel}
-        width={viewportState.width}
-        height={viewportState.height}
+        width={state.width}
+        height={state.height}
         className={cn('overflow-hidden')}>
         <FastLayer>
           {visiblePages.map(({ pageNumber, dimensions, position }) => {
@@ -466,8 +478,7 @@ function PDFView<ContainerRef extends HTMLElement>(props: {
         </FastLayer>
       </Stage>
       <div className="absolute top-0 left-0 text-slate-300">
-        Y: {viewportState.y}. X: {viewportState.x}. Z: {viewportState.scale}.
-        CP: {viewportState.currentPage}
+        Y: {state.y}. X: {state.x}. Z: {state.scale}. CP: {state.currentPage}
       </div>
     </>
   )
