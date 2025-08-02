@@ -170,9 +170,11 @@ function PDFView<ContainerRef extends HTMLElement>(props: {
       }
     >(),
     pagePositions: [] as ReturnType<PDFLoader['calculatePagePositions']>,
+
+    currentPage: 1,
+    totalPages: 1,
   })
   const loaderRef = useRef<PDFLoader>(null)
-  const wheelEndTimeoutRef = useRef<NodeJS.Timeout | null>(null)
 
   useEffect(
     function loadDocumentAndPages() {
@@ -190,7 +192,7 @@ function PDFView<ContainerRef extends HTMLElement>(props: {
 
       loader
         .load(props.src, PDF_PAGE_LOAD_SCALE)
-        .then(({ dominantPageWidth, pageDimensions }) => {
+        .then(({ pdf, dominantPageWidth, pageDimensions }) => {
           setStatus('success')
 
           const pagePositions = loader.calculatePagePositions({
@@ -205,6 +207,7 @@ function PDFView<ContainerRef extends HTMLElement>(props: {
             dominantPageWidth,
             pageDimensions,
             pagePositions,
+            totalPages: pdf.numPages,
           }))
         })
         .catch((e) => {
@@ -280,6 +283,7 @@ function PDFView<ContainerRef extends HTMLElement>(props: {
 
       return {
         ...viewportState,
+        currentPage: pageNumber,
         y: -targetY,
       }
     })
@@ -303,12 +307,32 @@ function PDFView<ContainerRef extends HTMLElement>(props: {
             ? Math.min(state.scale * zoomBy, 3)
             : Math.max(state.scale / zoomBy, 0.25)
         const mousePointToY = (pointer.y - state.y) / state.scale
-        const newY = pointer.y - mousePointToY * newScale
+        let newY = pointer.y - mousePointToY * newScale
 
         const centerX1 = viewportState.width / 2
         const centerXs = (viewportState.width * newScale) / 2
         const diff = Math.abs(centerX1 - centerXs)
         const piv = centerX1 > centerXs ? 1 : -1
+
+        // newY bounds logic
+        {
+          // top bounds
+          if (newY > GAP_BETWEEN_PAGES_ON_CANVAS * newScale)
+            newY = GAP_BETWEEN_PAGES_ON_CANVAS * newScale
+
+          // bottom bounds
+          const lastPagePos =
+            state.pagePositions[state.pagePositions.length - 1]
+          const lastPageHeight = lastPagePos.dimensions.height * newScale
+          const lastPageY = lastPagePos.position.y * newScale
+          const totalDocHeight = lastPageY + lastPageHeight
+          const maxY =
+            totalDocHeight -
+            state.height +
+            GAP_BETWEEN_PAGES_ON_CANVAS * newScale * 2
+
+          if (newY < -maxY) newY = -maxY
+        }
 
         return {
           ...state,
@@ -318,64 +342,85 @@ function PDFView<ContainerRef extends HTMLElement>(props: {
         }
       }
 
+      let closestPage = state.currentPage
+      {
+        let closestDistance = Infinity
+
+        const viewportTop = -state.y
+        const viewportCenter = viewportTop + state.height / 2
+
+        state.pagePositions.forEach((pos) => {
+          const pageTop = pos.position.y * state.scale
+          const pageBottom = pageTop + pos.dimensions.height * state.scale
+          const pageCenter = (pageTop + pageBottom) / 2
+
+          const distance = Math.abs(pageCenter - viewportCenter)
+          if (distance < closestDistance) {
+            closestDistance = distance
+            closestPage = pos.pageNumber
+          }
+        })
+      }
+
       let newY = state.y - deltaY
       let newX = state.x - deltaX
       const scale = state.scale
 
-      const lastPagePos = state.pagePositions[state.pagePositions.length - 1]
-      const lastPageHeight = lastPagePos.dimensions.height * scale
-      const lastPageY = lastPagePos.position.y * scale
-      const maxY =
-        lastPageY +
-        (lastPageHeight > state.height ? lastPageHeight - state.height : 0) +
-        GAP_BETWEEN_PAGES_ON_CANVAS * 2
+      // newY bounds logic
+      {
+        // top bounds
+        if (newY > GAP_BETWEEN_PAGES_ON_CANVAS * scale)
+          newY = GAP_BETWEEN_PAGES_ON_CANVAS * scale
 
-      if (newY > GAP_BETWEEN_PAGES_ON_CANVAS * scale)
-        newY = GAP_BETWEEN_PAGES_ON_CANVAS * scale
-      if (newY < -maxY) newY = -maxY
-
-      let largestPagePos = state.pagePositions[0]
-      for (const pagePos of state.pagePositions) {
-        if (pagePos.dimensions.width > largestPagePos.dimensions.width) {
-          largestPagePos = pagePos
-        }
+        // bottom bounds
+        const lastPagePos = state.pagePositions[state.pagePositions.length - 1]
+        const lastPageHeight = lastPagePos.dimensions.height * scale
+        const lastPageY = lastPagePos.position.y * scale
+        const totalDocHeight = lastPageY + lastPageHeight
+        const maxY =
+          totalDocHeight -
+          state.height +
+          GAP_BETWEEN_PAGES_ON_CANVAS * scale * 2
+        if (newY < -maxY) newY = -maxY
       }
 
-      const largestPageWidth = largestPagePos.dimensions.width * scale
+      // newX bounds logic
+      {
+        let largestPagePos = state.pagePositions[0]
+        for (const pagePos of state.pagePositions) {
+          if (pagePos.dimensions.width > largestPagePos.dimensions.width) {
+            largestPagePos = pagePos
+          }
+        }
 
-      if (largestPageWidth < state.width) {
-        newX = state.x
-      } else {
-        const largestPageX = largestPagePos.position.x * scale
-        const maxX =
-          largestPageX +
-          largestPageWidth -
-          state.width +
-          GAP_BETWEEN_PAGES_ON_CANVAS * 2
+        const largestPageWidth = largestPagePos.dimensions.width * scale
 
-        const extraX =
-          largestPageWidth > state.width ? largestPageWidth - state.width : 0
-        const minX = extraX / 2 + GAP_BETWEEN_PAGES_ON_CANVAS * 2
+        if (largestPageWidth < state.width) {
+          newX = state.x
+        } else {
+          const largestPageX = largestPagePos.position.x * scale
+          const maxX =
+            largestPageX +
+            largestPageWidth -
+            state.width +
+            GAP_BETWEEN_PAGES_ON_CANVAS * 2
 
-        if (newX > minX) newX = minX
-        if (newX < -maxX) newX = -maxX
+          const extraX =
+            largestPageWidth > state.width ? largestPageWidth - state.width : 0
+          const minX = extraX / 2 + GAP_BETWEEN_PAGES_ON_CANVAS * 2
+
+          if (newX > minX) newX = minX
+          if (newX < -maxX) newX = -maxX
+        }
       }
 
       return {
         ...state,
+        currentPage: closestPage,
         y: newY,
         x: newX,
       }
     })
-
-    if (wheelEndTimeoutRef.current !== null) {
-      clearTimeout(wheelEndTimeoutRef.current)
-    }
-
-    wheelEndTimeoutRef.current = setTimeout(() => {
-      const evt = new CustomEvent('PDFView/requestPageCandidates')
-      window.dispatchEvent(evt)
-    }, 150)
   }
 
   // NOTE: temporary loading state
@@ -420,9 +465,10 @@ function PDFView<ContainerRef extends HTMLElement>(props: {
           })}
         </FastLayer>
       </Stage>
-      {/* <div className="absolute top-0 left-0">
-        Y: {viewportState.y}. X: {viewportState.x}. Z: {viewportState.scale}
-      </div> */}
+      <div className="absolute top-0 left-0 text-slate-300">
+        Y: {viewportState.y}. X: {viewportState.x}. Z: {viewportState.scale}.
+        CP: {viewportState.currentPage}
+      </div>
     </>
   )
 }
@@ -457,28 +503,6 @@ function PDFPage(props: {
     },
     [props.pageNumber],
   )
-
-  useEffect(function handleCandidateRequest() {
-    const controller = new AbortController()
-
-    window.addEventListener(
-      'PDFView/handleRequestPositionsEvent',
-      () => {
-        if (groupRef.current === null) return
-
-        const group = groupRef.current
-
-        console.log('Page', group.id(), 'rendered', group.position())
-      },
-      {
-        signal: controller.signal,
-      },
-    )
-
-    return () => {
-      controller.abort()
-    }
-  }, [])
 
   return (
     <Group {...props.position} ref={groupRef}>
