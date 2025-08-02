@@ -7,7 +7,13 @@ import type {
   DocumentInitParameters,
   TypedArray,
 } from 'pdfjs-dist/types/src/display/api'
-import React, { useCallback, useEffect, useRef, useState } from 'react'
+import React, {
+  useCallback,
+  useContext,
+  useEffect,
+  useRef,
+  useState,
+} from 'react'
 import { FastLayer, Group, Image, Rect, Stage } from 'react-konva'
 
 pdfjs.GlobalWorkerOptions.workerSrc = new URL(
@@ -248,12 +254,47 @@ const PDF_PAGE_LOAD_SCALE = 2
 const GAP_BETWEEN_PAGES_ON_CANVAS = 24
 const ZOOM_BY_FACTOR = 1.05
 
-function PDFView<ContainerRef extends HTMLElement>(props: {
-  src: string
-  containerRef: React.RefObject<ContainerRef | null>
-}) {
-  const [state, setState] = useState({
-    status: 'loading' as 'loading' | 'success' | 'error',
+type PDFViewState = {
+  status: 'loading' | 'success' | 'error'
+  scale: number
+  width: number
+  height: number
+  x: number
+  y: number
+  dominantPageWidth: number
+  pageDimensions: Map<
+    number,
+    {
+      width: number
+      height: number
+    }
+  >
+  pagePositions: ReturnType<PDFLoader['calculatePagePositions']>
+  currentPage: number
+  totalPages: number
+}
+const PDFViewContext = React.createContext<
+  [PDFViewState, React.Dispatch<React.SetStateAction<PDFViewState>>]
+>(
+  null as unknown as [
+    PDFViewState,
+    React.Dispatch<React.SetStateAction<PDFViewState>>,
+  ],
+)
+
+const PDFViewActionsContext = React.createContext<{
+  setViewportScale: (scale: number) => void
+  goToPage: (pageNumber: number) => void
+}>(
+  null as unknown as {
+    setViewportScale: (scale: number) => void
+    goToPage: (pageNumber: number) => void
+  },
+)
+
+function PDFViewProvider(props: { children: React.ReactNode }) {
+  const [state, setState] = useState<PDFViewState>({
+    status: 'loading',
 
     scale: 1,
 
@@ -264,18 +305,61 @@ function PDFView<ContainerRef extends HTMLElement>(props: {
     y: 0,
 
     dominantPageWidth: 0,
-    pageDimensions: new Map<
-      number,
-      {
-        width: number
-        height: number
-      }
-    >(),
-    pagePositions: [] as ReturnType<PDFLoader['calculatePagePositions']>,
+    pageDimensions: new Map(),
+    pagePositions: [],
 
     currentPage: 1,
     totalPages: 1,
   })
+
+  const setViewportScale = useCallback((scale: number) => {
+    setState((state) => {
+      const newX = calculateXForScale(state.width, scale)
+
+      return {
+        ...state,
+        x: newX,
+        scale: scale,
+      }
+    })
+  }, [])
+
+  const goToPage = useCallback((pageNumber: number) => {
+    setState((viewportState) => {
+      const targetPagePos = viewportState.pagePositions.find(
+        (pos) => pos.pageNumber === pageNumber,
+      )
+      if (targetPagePos === undefined) return viewportState
+
+      const targetY =
+        targetPagePos.position.y * viewportState.scale -
+        GAP_BETWEEN_PAGES_ON_CANVAS
+
+      return {
+        ...viewportState,
+        currentPage: pageNumber,
+        y: -targetY,
+      }
+    })
+  }, [])
+
+  return (
+    <PDFViewActionsContext.Provider value={{ setViewportScale, goToPage }}>
+      <PDFViewContext.Provider value={[state, setState]}>
+        {props.children}
+      </PDFViewContext.Provider>
+    </PDFViewActionsContext.Provider>
+  )
+}
+
+function PDFView<ContainerRef extends HTMLElement>(props: {
+  src: string
+  containerRef: React.RefObject<ContainerRef | null>
+}) {
+  const context = useContext(PDFViewContext)
+  if (!context) throw new Error('PDFView must be child of PDFViewProvider.')
+
+  const [state, setState] = context
   const loaderRef = useRef<PDFLoader>(null)
 
   useEffect(
@@ -359,37 +443,6 @@ function PDFView<ContainerRef extends HTMLElement>(props: {
     [props.src],
   )
 
-  const setViewportScale = useCallback((scale: number) => {
-    setState((state) => {
-      const newX = calculateXForScale(state.width, scale)
-
-      return {
-        ...state,
-        x: newX,
-        scale: scale,
-      }
-    })
-  }, [])
-
-  const goToPage = useCallback((pageNumber: number) => {
-    setState((viewportState) => {
-      const targetPagePos = viewportState.pagePositions.find(
-        (pos) => pos.pageNumber === pageNumber,
-      )
-      if (targetPagePos === undefined) return viewportState
-
-      const targetY =
-        targetPagePos.position.y * viewportState.scale -
-        GAP_BETWEEN_PAGES_ON_CANVAS
-
-      return {
-        ...viewportState,
-        currentPage: pageNumber,
-        y: -targetY,
-      }
-    })
-  }, [])
-
   function handleWheel(e: Konva.KonvaEventObject<WheelEvent>) {
     e.evt.preventDefault()
 
@@ -453,34 +506,29 @@ function PDFView<ContainerRef extends HTMLElement>(props: {
   })
 
   return (
-    <>
-      <Stage
-        scaleX={state.scale}
-        scaleY={state.scale}
-        x={state.x}
-        y={state.y}
-        onWheel={handleWheel}
-        width={state.width}
-        height={state.height}
-        className={cn('overflow-hidden')}>
-        <FastLayer>
-          {visiblePages.map(({ pageNumber, dimensions, position }) => {
-            return (
-              <PDFPage
-                key={pageNumber}
-                loaderRef={loaderRef}
-                pageNumber={pageNumber}
-                dimensions={dimensions}
-                position={position}
-              />
-            )
-          })}
-        </FastLayer>
-      </Stage>
-      <div className="absolute top-0 left-0 text-slate-300">
-        Y: {state.y}. X: {state.x}. Z: {state.scale}. CP: {state.currentPage}
-      </div>
-    </>
+    <Stage
+      scaleX={state.scale}
+      scaleY={state.scale}
+      x={state.x}
+      y={state.y}
+      onWheel={handleWheel}
+      width={state.width}
+      height={state.height}
+      className={cn('overflow-hidden')}>
+      <FastLayer>
+        {visiblePages.map(({ pageNumber, dimensions, position }) => {
+          return (
+            <PDFPage
+              key={pageNumber}
+              loaderRef={loaderRef}
+              pageNumber={pageNumber}
+              dimensions={dimensions}
+              position={position}
+            />
+          )
+        })}
+      </FastLayer>
+    </Stage>
   )
 }
 
@@ -533,13 +581,29 @@ function PDFPage(props: {
           strokeWidth={1}
         />
       )}
-      {/* <Text
-        text={`Y: ${props.position.y}. X: ${props.position.x}`}
-        y={0}
-        x={0}
-      /> */}
     </Group>
   )
 }
 
-export { PDFView }
+function usePDFViewState() {
+  const context = useContext(PDFViewContext)
+  if (!context) throw new Error('PDFView must be child of PDFViewProvider.')
+
+  const [state] = context
+
+  return {
+    status: state.status,
+    scale: state.scale,
+    currentPage: state.currentPage,
+    totalPages: state.totalPages,
+  }
+}
+
+function usePDFViewActions() {
+  const context = useContext(PDFViewActionsContext)
+  if (!context) throw new Error('PDFView must be child of PDFViewProvider.')
+
+  return context
+}
+
+export { PDFView, PDFViewProvider, usePDFViewActions, usePDFViewState }
