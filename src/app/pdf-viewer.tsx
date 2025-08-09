@@ -15,7 +15,10 @@ export default function PDFViewer() {
       <div
         ref={divRef}
         className="relative h-[800px] w-[90vw] border border-slate-100">
-        <PDFView src="http://localhost:3000/sample.pdf" containerRef={divRef} />
+        <PDFView
+          src="http://localhost:3000/sample.pdf"
+          containerRef={divRef}
+        />
         <PageIndicator />
       </div>
     </PDFViewProvider>

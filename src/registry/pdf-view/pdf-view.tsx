@@ -2,6 +2,7 @@
 
 import { cn } from '@/lib/utils'
 import type Konva from 'konva'
+import { Vector2d } from 'konva/lib/types'
 import * as pdfjs from 'pdfjs-dist'
 import type {
   DocumentInitParameters,
@@ -14,7 +15,7 @@ import React, {
   useRef,
   useState,
 } from 'react'
-import { FastLayer, Group, Image, Rect, Stage } from 'react-konva'
+import { Group, Image, Layer, Rect, Stage } from 'react-konva'
 
 pdfjs.GlobalWorkerOptions.workerSrc = new URL(
   'pdfjs-dist/build/pdf.worker.min.mjs',
@@ -172,19 +173,14 @@ function calculateYClamping(
   return newY
 }
 
-function calculateXClamping(
-  inputX: number,
-  state: {
-    scale: number
-    pagePositions: ReturnType<PDFLoader['calculatePagePositions']>
-    width: number
-    height: number
-    x: number
-  },
-) {
+function calculateMinMaxX(state: {
+  scale: number
+  pagePositions: ReturnType<PDFLoader['calculatePagePositions']>
+  width: number
+  height: number
+  x: number
+}) {
   const scale = state.scale
-
-  let newX = inputX
   let largestPagePos = state.pagePositions[0]
   for (const pagePos of state.pagePositions) {
     if (pagePos.dimensions.width > largestPagePos.dimensions.width) {
@@ -198,14 +194,29 @@ function calculateXClamping(
   const docLeft = largestPageX
   const docRight = largestPageX + largestPageWidth
 
+  const padding = GAP_BETWEEN_PAGES_ON_CANVAS * scale
+
+  const maxX = padding - docLeft
+  const minX = state.width - docRight - padding
+
+  return { minX, maxX, largestPageWidth }
+}
+
+function calculateXClamping(
+  inputX: number,
+  state: {
+    scale: number
+    pagePositions: ReturnType<PDFLoader['calculatePagePositions']>
+    width: number
+    height: number
+    x: number
+  },
+) {
+  const { minX, maxX, largestPageWidth } = calculateMinMaxX(state)
+  let newX = inputX
   if (largestPageWidth <= state.width) {
     newX = state.x
   } else {
-    const padding = GAP_BETWEEN_PAGES_ON_CANVAS * scale
-
-    const maxX = padding - docLeft
-    const minX = state.width - docRight - padding
-
     if (newX > maxX) newX = maxX
     if (newX < minX) newX = minX
   }
@@ -352,6 +363,149 @@ function PDFViewProvider(props: { children: React.ReactNode }) {
   )
 }
 
+function remapRange(
+  x: number,
+  minO: number,
+  maxO: number,
+  dMin: number,
+  dMax: number,
+): number {
+  return dMin + ((x - minO) / (maxO - minO)) * (dMax - dMin)
+}
+
+function invertRemapRange(
+  xNew: number,
+  minO: number,
+  maxO: number,
+  dMin: number,
+  dMax: number,
+): number {
+  return minO + ((xNew - dMin) / (dMax - dMin)) * (maxO - minO)
+}
+
+function ScrollbarY(props: {
+  state: PDFViewState
+  onYUpdate: (y: number) => void
+}) {
+  const { state } = props
+
+  const lastPagePos = state.pagePositions[state.pagePositions.length - 1]
+  const contentH =
+    lastPagePos.position.y +
+    lastPagePos.dimensions.height +
+    GAP_BETWEEN_PAGES_ON_CANVAS * 2
+  const scaledContentH = contentH * state.scale
+
+  const viewH = state.height
+  const verticalRatio = viewH / scaledContentH
+  const vLen = Math.max(20, viewH * verticalRatio)
+
+  const minY = 2 * state.scale
+  const maxY = state.height - (minY + 10)
+
+  const dY = remapRange(
+    -state.y,
+    -GAP_BETWEEN_PAGES_ON_CANVAS,
+    scaledContentH,
+    minY,
+    maxY,
+  )
+
+  const [dragging, setDragging] = useState(false)
+
+  function dragBoundFunc(pos: Vector2d) {
+    let newY = pos.y
+
+    if (newY < minY) newY = minY
+    if (newY > maxY - vLen) newY = maxY - vLen
+
+    return {
+      y: newY,
+      x: state.width - 9,
+    }
+  }
+
+  return (
+    <Rect
+      draggable
+      dragBoundFunc={dragBoundFunc}
+      onDragStart={() => setDragging(true)}
+      onDragMove={(e) => {
+        const { y: yPos } = e.currentTarget.position()
+
+        let newY = -invertRemapRange(
+          yPos,
+          -GAP_BETWEEN_PAGES_ON_CANVAS,
+          scaledContentH,
+          minY,
+          maxY,
+        )
+        props.onYUpdate(newY)
+      }}
+      onDragEnd={() => setDragging(false)}
+      y={dragging ? undefined : dY}
+      x={state.width - 9}
+      width={6}
+      height={vLen}
+      fill="#c9c9c9"
+      cornerRadius={3}
+    />
+  )
+}
+
+function ScrollbarX(props: {
+  state: PDFViewState
+  onXUpdate: (x: number) => void
+}) {
+  const { state } = props
+  const stageW = state.width
+  const horizontalRatio = stageW / (stageW * state.scale)
+  const hLen = stageW * horizontalRatio
+
+  const { minX, maxX } = calculateMinMaxX(state)
+  const newMaxX = stageW - hLen
+  const dX = remapRange(state.x, minX, maxX, newMaxX, 0)
+  const showHScrollbar = state.scale > 1.05
+
+  const [dragging, setDragging] = useState(false)
+
+  function dragBoundFunc(pos: Vector2d) {
+    let newX = pos.x
+
+    if (newX >= newMaxX) newX = newMaxX
+    if (newX < 0) newX = 0
+
+    return {
+      y: state.height - 8,
+      x: newX,
+    }
+  }
+
+  if (!showHScrollbar) return null
+
+  return (
+    <Rect
+      draggable
+      dragBoundFunc={dragBoundFunc}
+      onDragStart={() => setDragging(true)}
+      onDragEnd={() => setDragging(false)}
+      onDragMove={(e) => {
+        const { x: xPos } = e.currentTarget.position()
+
+        let newX = invertRemapRange(xPos, minX, maxX, newMaxX, 0)
+
+        props.onXUpdate(newX)
+      }}
+      x={dragging ? undefined : dX}
+      y={state.height - 8}
+      width={hLen}
+      height={6}
+      fill="#c9c9c9"
+      cornerRadius={3}
+    />
+  )
+}
+
 function PDFView<ContainerRef extends HTMLElement>(props: {
   src: string
   containerRef: React.RefObject<ContainerRef | null>
@@ -444,16 +598,46 @@ function PDFView<ContainerRef extends HTMLElement>(props: {
     [props.src],
   )
 
-  function handleWheel(e: Konva.KonvaEventObject<WheelEvent>) {
+  function handleWheelLayer(e: Konva.KonvaEventObject<WheelEvent>) {
+    e.evt.preventDefault()
+
+    const layer = e.currentTarget as Konva.Layer
+    const stage = layer.getStage()
+
+    const deltaY = e.evt.deltaY
+    const deltaX = e.evt.deltaX
+    const pointer = stage.getPointerPosition()!
+
+    const modPressed = e.evt.ctrlKey || e.evt.metaKey
+
+    updateStateOnWheel({ deltaX, deltaY, modPressed, pointer })
+  }
+
+  function handleWheelStage(e: Konva.KonvaEventObject<WheelEvent>) {
     e.evt.preventDefault()
 
     const stage = e.currentTarget as Konva.Stage
 
     const deltaY = e.evt.deltaY
     const deltaX = e.evt.deltaX
-    const direction = e.evt.deltaY > 0 ? -1 : 1
-    const zoomBy = e.evt.ctrlKey || e.evt.metaKey ? ZOOM_BY_FACTOR : 1
     const pointer = stage.getPointerPosition()!
+
+    const modPressed = e.evt.ctrlKey || e.evt.metaKey
+
+    updateStateOnWheel({ deltaX, deltaY, modPressed, pointer })
+  }
+
+  function updateStateOnWheel(params: {
+    deltaX: number
+    deltaY: number
+    modPressed: boolean
+    pointer: Konva.Vector2d
+  }) {
+    const deltaY = params.deltaY
+    const deltaX = params.deltaX
+    const direction = params.deltaY > 0 ? -1 : 1
+    const zoomBy = params.modPressed ? ZOOM_BY_FACTOR : 1
+    const pointer = params.pointer
 
     setState((state) => {
       if (zoomBy !== 1) {
@@ -507,29 +691,45 @@ function PDFView<ContainerRef extends HTMLElement>(props: {
   })
 
   return (
-    <Stage
-      scaleX={state.scale}
-      scaleY={state.scale}
-      x={state.x}
-      y={state.y}
-      onWheel={handleWheel}
-      width={state.width}
-      height={state.height}
-      className={cn('overflow-hidden')}>
-      <FastLayer>
-        {visiblePages.map(({ pageNumber, dimensions, position }) => {
-          return (
-            <PDFPage
-              key={pageNumber}
-              loaderRef={loaderRef}
-              pageNumber={pageNumber}
-              dimensions={dimensions}
-              position={position}
-            />
-          )
-        })}
-      </FastLayer>
-    </Stage>
+    <div className="relative">
+      <Stage
+        width={state.width}
+        height={state.height}
+        onWheel={handleWheelStage}
+        className={cn('overflow-hidden')}>
+        <Layer
+          scaleX={state.scale}
+          scaleY={state.scale}
+          x={state.x}
+          y={state.y}
+          onWheel={handleWheelLayer}>
+          {visiblePages.map(({ pageNumber, dimensions, position }) => {
+            return (
+              <PDFPage
+                key={pageNumber}
+                loaderRef={loaderRef}
+                pageNumber={pageNumber}
+                dimensions={dimensions}
+                position={position}
+              />
+            )
+          })}
+        </Layer>
+
+        <Layer>
+          <ScrollbarY
+            state={state}
+            onYUpdate={(y) => setState((prev) => ({ ...prev, y }))}
+          />
+          <ScrollbarX
+            state={state}
+            onXUpdate={(x) => setState((prev) => ({ ...prev, x }))}
+          />
+        </Layer>
+      </Stage>
+
+      <div className="absolute top-2 right-2">{state.x}</div>
+    </div>
   )
 }
 
