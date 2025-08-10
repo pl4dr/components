@@ -5,7 +5,14 @@ import {
 } from '@/registry/pdfview/pdfview-constants'
 import { PDFLoader } from '@/registry/pdfview/pdfview-loader'
 import { calculateXForScale } from '@/registry/pdfview/pdfview-utils'
-import React, { useCallback, useContext, useEffect, useState } from 'react'
+import { Vector2d } from 'konva/lib/types'
+import React, {
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useState,
+} from 'react'
 
 export type PDFViewState = {
   status: 'loading' | 'success' | 'error'
@@ -25,6 +32,23 @@ export type PDFViewState = {
   pagePositions: ReturnType<PDFLoader['calculatePagePositions']>
   currentPage: number
   totalPages: number
+
+  pointer: Vector2d
+
+  objects: Map<string, Object>
+  pageObjects: Map<number, string[]>
+  selectedObjectKey: string | null
+  objectToPlace: Object | null
+}
+
+export type Object = {
+  id: string
+  position: Vector2d
+  dimensions: { width: number; height: number }
+  tag: string
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  data: any
+  placed: boolean
 }
 
 const PDFViewContext = React.createContext<
@@ -39,12 +63,11 @@ const PDFViewContext = React.createContext<
 const PDFViewActionsContext = React.createContext<{
   setViewportScale: (scale: number) => void
   goToPage: (pageNumber: number) => void
-}>(
-  null as unknown as {
-    setViewportScale: (scale: number) => void
-    goToPage: (pageNumber: number) => void
-  },
-)
+  setObjectToPlace: (
+    objectToPlace: Omit<Object, 'position' | 'placed'> | null,
+  ) => void
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+}>(null as any)
 
 type Actions =
   typeof PDFViewActionsContext extends React.Context<infer T> ? T : never
@@ -73,6 +96,16 @@ function PDFViewProvider(props: { children: React.ReactNode }) {
 
     currentPage: 1,
     totalPages: 1,
+
+    pointer: {
+      x: -1000,
+      y: -1000,
+    },
+
+    objects: new Map(),
+    pageObjects: new Map(),
+    selectedObjectKey: null,
+    objectToPlace: null,
   })
 
   const setViewportScale = useCallback((scale: number) => {
@@ -107,14 +140,36 @@ function PDFViewProvider(props: { children: React.ReactNode }) {
     })
   }, [])
 
-  const actions = {
-    setViewportScale,
-    goToPage,
-  }
+  const setObjectToPlace = useCallback(
+    (object: Omit<Object, 'position' | 'placed'> | null) => {
+      setState((prev) => ({
+        ...prev,
+        objectToPlace: object
+          ? {
+              ...object,
+              position: {
+                x: 0,
+                y: 0,
+              },
+              placed: false,
+            }
+          : null,
+      }))
+    },
+    [],
+  )
+
+  const actions = useMemo(() => {
+    return {
+      setViewportScale,
+      goToPage,
+      setObjectToPlace,
+    }
+  }, [setViewportScale, goToPage, setObjectToPlace])
 
   useEffect(() => {
     window.pdfview = actions
-  }, [])
+  }, [actions])
 
   return (
     <PDFViewActionsContext.Provider value={actions}>

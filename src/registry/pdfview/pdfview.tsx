@@ -4,12 +4,14 @@ import { cn } from '@/lib/utils'
 import {
   GAP_BETWEEN_PAGES_ON_CANVAS,
   PDF_PAGE_LOAD_SCALE,
+  PDF_PAGE_STROKE_COLOR,
   ZOOM_BY_FACTOR,
   ZOOM_MAX,
   ZOOM_MIN,
 } from '@/registry/pdfview/pdfview-constants'
 import { PDFLoader } from '@/registry/pdfview/pdfview-loader'
 import {
+  Object,
   PDFViewContext,
   PDFViewState,
 } from '@/registry/pdfview/pdfview-provider'
@@ -24,13 +26,18 @@ import {
 } from '@/registry/pdfview/pdfview-utils'
 import type Konva from 'konva'
 import { Vector2d } from 'konva/lib/types'
-import React, { useContext, useEffect, useRef, useState } from 'react'
+import React, { useContext, useEffect, useMemo, useRef, useState } from 'react'
 
-import { Group, Image, Layer, Rect, Stage } from 'react-konva'
+import { Group, Image, Layer, Rect, Stage, Transformer } from 'react-konva'
 
 function PDFView<ContainerRef extends HTMLElement>(props: {
   src: string
   containerRef: React.RefObject<ContainerRef | null>
+
+  RenderObject?: React.ComponentType<{
+    object: Object
+    remove: () => void
+  }>
 }) {
   const context = useContext(PDFViewContext)
   if (!context) throw new Error('PDFView must be child of PDFViewProvider.')
@@ -69,6 +76,11 @@ function PDFView<ContainerRef extends HTMLElement>(props: {
             pageDimensions,
             pagePositions,
             totalPages: pdf.numPages,
+
+            objectToPlace: null,
+            selectedObjectKey: null,
+            objects: new Map(),
+            pageObjects: new Map(),
           }))
         })
         .catch((e) => {
@@ -111,7 +123,54 @@ function PDFView<ContainerRef extends HTMLElement>(props: {
 
       resizeObserver.observe(container)
 
+      const controller = new AbortController()
+      window.addEventListener(
+        'keydown',
+        (e) => {
+          if (e.key === 'Escape') {
+            setState((prev) => {
+              return {
+                ...prev,
+                selectedObjectKey: null,
+                objectToPlace: null,
+              }
+            })
+          }
+
+          if (e.key === 'Backspace' || e.key === 'Delete') {
+            setState((prev) => {
+              const selectedObjectKey = prev.selectedObjectKey
+              if (!selectedObjectKey) return prev
+
+              const objects = new Map(prev.objects)
+              objects.delete(selectedObjectKey!)
+
+              const pageObjects = new Map(prev.pageObjects)
+              if (pageObjects.has(prev.currentPage)) {
+                const pageObjectIds = pageObjects.get(prev.currentPage)!
+                const objectIds = pageObjectIds.filter(
+                  (id) => id !== selectedObjectKey,
+                )
+
+                pageObjects.set(prev.currentPage, objectIds)
+              }
+
+              return {
+                ...prev,
+                objects,
+                pageObjects,
+                selectedObjectKey: null,
+              }
+            })
+          }
+        },
+        {
+          signal: controller.signal,
+        },
+      )
+
       return () => {
+        controller.abort()
         resizeObserver.disconnect()
         loaderRef.current?.dispose()
       }
@@ -217,7 +276,25 @@ function PDFView<ContainerRef extends HTMLElement>(props: {
       width={state.width}
       height={state.height}
       onWheel={handleWheelStage}
-      className={cn('overflow-hidden')}>
+      onMouseMove={(e) => {
+        const stage = e.currentTarget as Konva.Stage
+        const pointer = stage.getPointerPosition()!
+
+        setState((prev) => ({
+          ...prev,
+          pointer,
+        }))
+      }}
+      onClick={() => {
+        setState((prev) => ({
+          ...prev,
+          selectedObjectKey: null,
+          objectToPlace: null,
+        }))
+      }}
+      className={cn('overflow-hidden', {
+        // 'cursor-none': state.objectToPlace,
+      })}>
       <Layer
         scaleX={state.scale}
         scaleY={state.scale}
@@ -232,6 +309,7 @@ function PDFView<ContainerRef extends HTMLElement>(props: {
               pageNumber={pageNumber}
               dimensions={dimensions}
               position={position}
+              RenderObject={props.RenderObject}
             />
           )
         })}
@@ -246,6 +324,15 @@ function PDFView<ContainerRef extends HTMLElement>(props: {
           state={state}
           onXUpdate={(x) => setState((prev) => ({ ...prev, x }))}
         />
+
+        {state.objectToPlace && props.RenderObject && (
+          <MouseCursor
+            scale={state.scale}
+            pointer={state.pointer}
+            objectToPlace={state.objectToPlace}
+            RenderObject={props.RenderObject}
+          />
+        )}
       </Layer>
     </Stage>
   )
@@ -259,7 +346,16 @@ function PDFPage(props: {
     x: number
     y: number
   }
+
+  RenderObject?: React.ComponentType<{
+    object: Object
+    remove: () => void
+  }>
 }) {
+  const context = useContext(PDFViewContext)
+  if (!context) throw new Error('PDFView must be child of PDFViewProvider.')
+  const [state, setState] = context
+
   const groupRef = useRef<Konva.Group>(null)
   const [image, setImage] = useState<HTMLCanvasElement | undefined>(undefined)
 
@@ -283,25 +379,298 @@ function PDFPage(props: {
     [props.pageNumber],
   )
 
+  const RenderObject = props.RenderObject
+  const objects = useMemo(() => {
+    if (!RenderObject) return []
+    const objectIds = state.pageObjects.get(props.pageNumber) ?? []
+
+    const objects = [] as Object[]
+    for (const objectId of objectIds) {
+      const object = state.objects.get(objectId)
+      if (object) objects.push(object)
+    }
+
+    return objects
+  }, [props.pageNumber, RenderObject, state.pageObjects, state.objects])
+
+  function placeObject(pageNumber: number, pointer: Vector2d) {
+    if (!state.objectToPlace) return
+
+    const newObject = {
+      id: state.objectToPlace.id,
+      position: pointer,
+      dimensions: state.objectToPlace.dimensions,
+      tag: state.objectToPlace.tag,
+      data: state.objectToPlace.data,
+      placed: true,
+    }
+
+    setState((prev) => {
+      const objects = new Map(prev.objects)
+      objects.set(newObject.id, newObject)
+
+      const pageObjects = new Map(prev.pageObjects)
+      if (!pageObjects.has(pageNumber)) {
+        pageObjects.set(pageNumber, [])
+      }
+
+      const pageObjectIds = pageObjects.get(pageNumber)!
+      if (!pageObjectIds.includes(newObject.id))
+        pageObjects.get(pageNumber)!.push(newObject.id)
+
+      return {
+        ...prev,
+        objects: objects,
+        pageObjects: pageObjects,
+        objectToPlace: null,
+      }
+    })
+
+    setTimeout(() => {
+      setState((prev) => ({
+        ...prev,
+        selectedObjectKey: newObject.id,
+      }))
+    }, 100)
+  }
+
   return (
-    <Group {...props.position} ref={groupRef}>
+    <Group
+      {...props.position}
+      clipX={0}
+      clipY={0}
+      clipWidth={props.dimensions.width}
+      clipHeight={props.dimensions.height}
+      ref={groupRef}
+      onClick={(e) => {
+        const group = e.currentTarget as Konva.Group
+        const localPos = group.getRelativePointerPosition()!
+
+        placeObject(props.pageNumber, localPos)
+      }}>
       {!image && (
         <Rect
           {...props.dimensions}
-          stroke={'#e5e5e5'}
-          fill={'#efefef'}
-          strokeWidth={0.5}
+          fill={'white'}
+          stroke={PDF_PAGE_STROKE_COLOR}
+          strokeWidth={1}
         />
       )}
       {image && (
         <Image
           {...props.dimensions}
+          x={0.5}
+          y={0.5}
+          width={props.dimensions.width - 1}
+          height={props.dimensions.height - 1}
           image={image}
-          stroke={'#e5e5e5'}
-          strokeWidth={1}
+          stroke={PDF_PAGE_STROKE_COLOR}
+          strokeWidth={1 / state.scale}
+          strokeAfterFill={true}
           alt={`Page ${props.pageNumber}`}
         />
       )}
+
+      {image &&
+        objects.map((object) => {
+          return (
+            <ObjectContainer
+              key={object.id}
+              object={object}
+              RenderObject={RenderObject!}
+            />
+          )
+        })}
+    </Group>
+  )
+}
+
+function ObjectContainer(props: {
+  object: Object
+  RenderObject: React.ComponentType<{
+    object: Object
+    remove: () => void
+  }>
+}) {
+  const context = useContext(PDFViewContext)
+  if (!context) throw new Error('PDFView must be child of PDFViewProvider.')
+  const [state, setState] = context
+
+  const width = props.object.dimensions.width
+  const height = props.object.dimensions.height
+  const x = props.object.position.x - width / 2
+  const y = props.object.position.y - height / 2
+
+  const selected = props.object.id === state.selectedObjectKey
+  const groupRef = useRef<Konva.Group>(null)
+  const transformerRef = useRef<Konva.Transformer>(null)
+
+  useEffect(() => {
+    if (selected && transformerRef.current && groupRef.current) {
+      transformerRef.current.nodes([groupRef.current])
+      transformerRef.current.getLayer()?.batchDraw()
+    }
+  }, [selected])
+
+  return (
+    <>
+      <Group
+        draggable
+        onTransformEnd={(e) => {
+          const group = e.target
+          const pos = group.position()
+          const size = group.size()
+
+          setState((prev) => {
+            const objects = new Map(prev.objects)
+            objects.set(props.object.id, {
+              ...props.object,
+              position: {
+                x: pos.x + size.width / 2,
+                y: pos.y + size.height / 2,
+              },
+            })
+
+            return {
+              ...prev,
+              objects,
+            }
+          })
+        }}
+        onDragStart={() => {
+          setState((prev) => {
+            return {
+              ...prev,
+              selectedObjectKey: props.object.id,
+            }
+          })
+        }}
+        onDragEnd={(e) => {
+          const group = e.target
+          const pos = group.position()
+          const size = group.size()
+
+          setState((prev) => {
+            const objects = new Map(prev.objects)
+            objects.set(props.object.id, {
+              ...props.object,
+              position: {
+                x: pos.x + size.width / 2,
+                y: pos.y + size.height / 2,
+              },
+            })
+
+            return {
+              ...prev,
+              objects,
+            }
+          })
+        }}
+        ref={groupRef}
+        width={width}
+        height={height}
+        x={x}
+        y={y}
+        onClick={(e) => {
+          e.cancelBubble = true
+
+          setState((prev) => {
+            return {
+              ...prev,
+              selectedObjectKey: props.object.id,
+            }
+          })
+        }}>
+        <props.RenderObject
+          object={props.object}
+          remove={() => {
+            setState((prev) => {
+              const objects = new Map(prev.objects)
+              objects.delete(props.object.id)
+
+              const pageObjects = new Map(prev.pageObjects)
+              if (pageObjects.has(prev.currentPage)) {
+                const pageObjectIds = pageObjects.get(prev.currentPage)!
+                const objectIds = pageObjectIds.filter(
+                  (id) => id !== props.object.id,
+                )
+
+                pageObjects.set(prev.currentPage, objectIds)
+              }
+
+              return {
+                ...prev,
+                objects,
+                pageObjects,
+                selectedObjectKey: null,
+              }
+            })
+          }}
+        />
+      </Group>
+
+      {selected && (
+        <Transformer
+          ref={transformerRef}
+          rotateEnabled={false}
+          keepRatio={true}
+          enabledAnchors={[
+            'top-left',
+            'top-right',
+            'bottom-left',
+            'bottom-right',
+          ]}
+          boundBoxFunc={(oldBox, newBox) => {
+            const minSize = 20 * state.scale
+            if (newBox.width < minSize || newBox.height < minSize) {
+              return oldBox
+            }
+            return newBox
+          }}
+          // border
+          borderStroke="black"
+          borderStrokeWidth={state.scale}
+          borderDash={[4 * state.scale, 4 * state.scale]}
+          borderDashEnabled={true}
+          // anchor
+          anchorSize={3 * state.scale}
+          anchorStroke="black"
+          anchorStrokeWidth={state.scale}
+          anchorFill="black"
+          anchorCornerRadius={100}
+        />
+      )}
+    </>
+  )
+}
+
+function MouseCursor(props: {
+  scale: number
+  pointer: Vector2d
+  objectToPlace: Object
+
+  RenderObject: React.ComponentType<{
+    object: Object
+    remove: () => void
+  }>
+}) {
+  const width = props.objectToPlace.dimensions.width * props.scale
+  const height = props.objectToPlace.dimensions.height * props.scale
+  const x = props.pointer.x - width / 2
+  const y = props.pointer.y - height / 2
+
+  return (
+    <Group width={width} height={height} x={x} y={y}>
+      <props.RenderObject
+        object={{
+          ...props.objectToPlace,
+          dimensions: {
+            width: width,
+            height: height,
+          },
+        }}
+        remove={() => {}}
+      />
     </Group>
   )
 }
@@ -356,7 +725,7 @@ function ScrollbarY(props: {
       onDragMove={(e) => {
         const { y: yPos } = e.currentTarget.position()
 
-        let newY = -invertRemapRange(
+        const newY = -invertRemapRange(
           yPos,
           -GAP_BETWEEN_PAGES_ON_CANVAS,
           scaledContentH,
@@ -414,8 +783,7 @@ function ScrollbarX(props: {
       onDragEnd={() => setDragging(false)}
       onDragMove={(e) => {
         const { x: xPos } = e.currentTarget.position()
-
-        let newX = invertRemapRange(xPos, minX, maxX, newMaxX, 0)
+        const newX = invertRemapRange(xPos, minX, maxX, newMaxX, 0)
 
         props.onXUpdate(newX)
       }}

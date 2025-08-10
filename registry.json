@@ -1,7 +1,7 @@
 {
   "$schema": "https://ui.shadcn.com/schema/registry.json",
-  "name": "PDF View",
-  "homepage": "https://github.com/pl4dr/pdf-view",
+  "name": "PL4DR Components",
+  "homepage": "https://github.com/pl4dr/components",
   "items": [
     {
       "name": "pdfview",
@@ -9,6 +9,7 @@
       "title": "PDF View",
       "description": "PDF View component",
       "dependencies": [
+        "nanoid",
         "konva",
         "react-konva",
         "pdfjs-dist"
