@@ -21,7 +21,7 @@ export default function PDFViewer() {
         ref={divRef}
         className="relative h-[800px] w-[90vw] border border-slate-100">
         <PDFView
-          src="http://localhost:3000/sample.pdf"
+          src="/sample.pdf"
           containerRef={divRef}
           RenderObject={RenderObject}
         />

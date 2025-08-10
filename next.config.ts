@@ -7,9 +7,14 @@ const withMDX = createMDX({
 
 const nextConfig: NextConfig = {
   output: 'export',
+  basePath: process.env.NODE_ENV === 'production' ? '/components' : undefined,
+  assetPrefix:
+    process.env.NODE_ENV === 'production' ? '/components' : undefined,
 
   reactStrictMode: true,
-
+  images: {
+    unoptimized: true,
+  },
   webpack(config) {
     config.externals = [...config.externals, { canvas: 'canvas' }]
     return config
