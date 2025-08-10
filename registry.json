@@ -4,10 +4,10 @@
   "homepage": "https://github.com/pl4dr/pdf-view",
   "items": [
     {
-      "name": "pdf-view",
+      "name": "pdfview",
       "type": "registry:ui",
       "title": "PDF View",
-      "description": "PDFV Viewer component",
+      "description": "PDF View component",
       "dependencies": [
         "konva",
         "react-konva",
@@ -15,8 +15,29 @@
       ],
       "files": [
         {
-          "path": "src/registry/pdf-view/pdf-view.tsx",
-          "type": "registry:ui"
+          "path": "src/registry/pdfview/pdfview.tsx",
+          "type": "registry:ui",
+          "target": "components/pdfview/pdfview.tsx"
+        },
+        {
+          "path": "src/registry/pdfview/pdfview-provider.tsx",
+          "type": "registry:ui",
+          "target": "components/pdfview/pdfview-provider.tsx"
+        },
+        {
+          "path": "src/registry/pdfview/pdfview-utils.ts",
+          "type": "registry:lib",
+          "target": "components/pdfview/pdfview-utils.ts"
+        },
+        {
+          "path": "src/registry/pdfview/pdfview-loader.ts",
+          "type": "registry:lib",
+          "target": "components/pdfview/pdfview-loader.ts"
+        },
+        {
+          "path": "src/registry/pdfview/pdfview-constants.ts",
+          "type": "registry:lib",
+          "target": "components/pdfview/pdfview-constants.ts"
         }
       ]
     }

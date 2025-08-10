@@ -1,10 +1,10 @@
 'use client'
 
+import { PDFView } from '@/registry/pdfview/pdfview'
 import {
-  PDFView,
   PDFViewProvider,
   usePDFViewState,
-} from '@/registry/pdf-view/pdf-view'
+} from '@/registry/pdfview/pdfview-provider'
 import { useRef } from 'react'
 
 export default function PDFViewer() {
