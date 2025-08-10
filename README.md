@@ -1,6 +1,6 @@
 # PL4DR/components
 
-Accessible and customizable components that you can copy and paste into your apps. 
+Customizable components that you can copy and paste into your apps. 
 
 ## Documentation
 

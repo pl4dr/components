@@ -1,5 +1,7 @@
+import { Preview } from '@/components/preview-nossr'
 import { createGenerator } from 'fumadocs-typescript'
 import { AutoTypeTable } from 'fumadocs-typescript/ui'
+import * as TabsComponents from 'fumadocs-ui/components/tabs'
 import { TypeTable } from 'fumadocs-ui/components/type-table'
 import defaultComponents from 'fumadocs-ui/mdx'
 import type { MDXComponents } from 'mdx/types'
@@ -12,7 +14,9 @@ export function getMDXComponents(components?: MDXComponents): MDXComponents {
     AutoTypeTable: (props) => (
       <AutoTypeTable {...props} generator={generator} />
     ),
+    ...TabsComponents,
     ...components,
     TypeTable,
+    Preview,
   }
 }
