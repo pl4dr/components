@@ -1,9 +1,5 @@
-import { PDFViewer } from '@/app/pdf-viewer-nossr'
+import { redirect } from 'next/navigation'
 
 export default function Home() {
-  return (
-    <main className="grid h-screen place-content-center">
-      <PDFViewer />
-    </main>
-  )
+  redirect('/docs')
 }

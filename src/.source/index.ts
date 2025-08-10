@@ -1,5 +1,5 @@
 // @ts-nocheck -- skip type checking
-import * as docs_0 from "../../content/docs/index.mdx?collection=docs&hash=1754153906060"
+import * as docs_0 from "../../content/docs/index.mdx?collection=docs&hash=1754823813124"
 import { _runtime } from "fumadocs-mdx"
 import * as _source from "../../source.config"
 export const docs = _runtime.docs<typeof _source.docs>([{ info: {"path":"index.mdx","absolutePath":"/Users/chan/Documents/Projects/pdf-view/content/docs/index.mdx"}, data: docs_0 }], [])

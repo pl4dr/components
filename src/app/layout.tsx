@@ -14,7 +14,7 @@ const geistMono = Geist_Mono({
 })
 
 export const metadata: Metadata = {
-  title: 'PDF View',
+  title: 'PL4DR Components',
 }
 
 export default function RootLayout({
@@ -23,9 +23,11 @@ export default function RootLayout({
   children: React.ReactNode
 }) {
   return (
-    <html lang="en" suppressHydrationWarning>
+    <html
+      lang="en"
+      suppressHydrationWarning
+      className={`${geistSans.variable} ${geistMono.variable} antialiased`}>
       <body
-        className={`${geistSans.variable} ${geistMono.variable} antialiased`}
         style={{
           display: 'flex',
           flexDirection: 'column',

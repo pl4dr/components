@@ -1,8 +1,213 @@
 ---
-title: Hello World
-description: This is a test page.
+title: PDF View 
+description: Continuous-scrollable PDF View component.
+icon: File
 ---
 
-## Introduction
+## Installation
 
-I love Anime.
+```npm
+npx shadcn@latest install https://pl4dr.github.io/components/r/pdfview.json
+```
+
+This will install these components under `@/components/pdfview`:
+
+- `pdfview`
+- `pdfview-provider`
+- `pdfview-utils`
+- `pdfview-loader`
+- `pdfview-constants`
+
+and these packages if not already installed:
+
+- `nanoid`
+- `konva`
+- `react-konva`
+- `pdfjs-dist`
+
+## Usage
+
+#### Basic usage – rendering PDF
+
+<Callout type="warning">
+In Next.js, make sure to skip SSR when importing the pdfview modules. 
+Here's how to do this in [Pages Router](https://nextjs.org/docs/pages/guides/lazy-loading#with-no-ssr) and [App Router](https://nextjs.org/docs/app/guides/lazy-loading#skipping-ssr).
+</Callout>
+
+```tsx tab="components/pdfviewer.tsx"
+import { PDFView } from '@/components/pdfview/pdfview'
+import {
+  PDFViewProvider,
+} from '@/components/pdfview/pdfview-provider'
+import { useRef } from 'react'
+
+export default function PDFViewer() {
+  const divRef = useRef<HTMLDivElement>(null)
+
+  return (
+    <PDFViewProvider>
+      <div
+        ref={divRef}
+        className="relative h-[800px] w-[90vw] border border-slate-100">
+        <PDFView
+          src="/sample.pdf"
+          containerRef={divRef}
+        />
+      </div>
+    </PDFViewProvider>
+  )
+}
+```
+
+#### Rendering objects on pages and displaying page indicator. 
+
+```tsx tab="components/pdfviewer.tsx"
+import { PDFView } from '@/components/pdfview/pdfview'
+import {
+  Object,
+  PDFViewProvider,
+  usePDFViewActions,
+  usePDFViewState,
+} from '@/components/pdfview/pdfview-provider'
+import { nanoid } from 'nanoid'
+import { useEffect, useRef, useState } from 'react'
+import { Image } from 'react-konva'
+
+export default function PDFViewer() {
+  const divRef = useRef<HTMLDivElement>(null)
+
+  return (
+    <PDFViewProvider>
+      <ObjectButtons />
+      <div
+        ref={divRef}
+        className="relative h-[800px] w-[90vw] border border-slate-100">
+        <PDFView
+          src="/sample.pdf"
+          containerRef={divRef}
+          RenderObject={RenderObject}
+        />
+      </div>
+      <PageIndicator />
+    </PDFViewProvider>
+  )
+}
+
+function ObjectButtons() {
+  const actions = usePDFViewActions()
+  return (
+    <div>
+      {/* eslint-disable-next-line */}
+      <img
+        onClick={() => {
+          actions.setObjectToPlace({
+            id: nanoid(),
+            dimensions: { width: 38, height: 38 },
+            tag: 'image',
+            data: {
+              src: 'https://picsum.photos/100/100',
+            },
+          })
+        }}
+        src="https://picsum.photos/100/100"
+        className="size-6"
+      />
+    </div>
+  )
+}
+
+function RenderObject(props: { object: Object }) {
+  const [image, setImage] = useState<HTMLImageElement | null>(null)
+
+  useEffect(() => {
+    const img = new window.Image()
+    img.src = props.object.data.src
+    img.onload = () => {
+      setImage(img)
+    }
+  }, [props.object])
+
+  if (!image) return null
+
+  return (
+    <Image
+      image={image}
+      width={props.object.dimensions.width}
+      height={props.object.dimensions.height}
+      listening={props.object.placed}
+      alt={''}
+    />
+  )
+}
+
+function PageIndicator() {
+  const { currentPage, totalPages } = usePDFViewState()
+
+  return (
+    <div className="absolute bottom-2 left-2 rounded-md border border-slate-300 bg-white px-2 py-1 text-slate-900 shadow-xs">
+      {currentPage} / {totalPages}
+    </div>
+  )
+}
+```
+
+## Accessing PDFView state & actions
+
+#### PDFView state
+
+The state of `PDFView` can be accessed via `usePDFViewState` hook from the child component tree of `PDFViewProvider`. The return type of `usePDFViewState` is as follows:
+
+<TypeTable
+  type={{
+    status: {
+      type: '\'loading\' | \'success\' | \'error\'',
+      default: 'loading',
+      required: true
+    },
+    scale: {
+      type: 'number',
+      default: '1',
+      required: true
+    },
+    currentPage: {
+      type: 'number',
+      default: '1',
+      required: true
+    },
+    totalPages: {
+      type: 'number',
+      default: '1',
+      required: true
+    }
+  }}
+/>
+
+
+#### PDFView actions
+
+The actions of `PDFView` can be accessed via `usePDFViewActions` hook from the child component tree of `PDFViewProvider`. The return type of `usePDFViewActions` is as follows:
+
+<TypeTable
+  type={{
+    setViewportScale: {
+      type: '(scale: number) => void',
+      required: true
+    },
+    goToPage: {
+      type: '(pageNumber: number) => void',
+      required: true
+    },
+    setObjectToPlace: {
+      type: '(objectToPlace: Omit<Object, \'position\' | \'placed\'> | null) => void',
+      required: true
+    },
+    getObjects: {
+      type: '() => { objects: Map<string, Object>; pageObjects: Map<number, string[]> }',
+      required: true
+    }
+  }}
+/>
+
+<Callout>
+The `Object` is from the `pdfview-provider.tsx` module. Not the global `Object`.
+</Callout>

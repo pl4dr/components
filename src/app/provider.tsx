@@ -8,6 +8,7 @@ export function Provider({ children }: { children: ReactNode }) {
   return (
     <RootProvider
       search={{
+        enabled: false,
         SearchDialog,
       }}>
       {children}

@@ -66,6 +66,10 @@ const PDFViewActionsContext = React.createContext<{
   setObjectToPlace: (
     objectToPlace: Omit<Object, 'position' | 'placed'> | null,
   ) => void
+  getObjects: () => {
+    objects: Map<string, Object>
+    pageObjects: Map<number, string[]>
+  }
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
 }>(null as any)
 
@@ -159,13 +163,21 @@ function PDFViewProvider(props: { children: React.ReactNode }) {
     [],
   )
 
+  const getObjects = useCallback(() => {
+    return {
+      objects: state.objects,
+      pageObjects: state.pageObjects,
+    }
+  }, [state.objects, state.pageObjects])
+
   const actions = useMemo(() => {
     return {
       setViewportScale,
       goToPage,
       setObjectToPlace,
+      getObjects,
     }
-  }, [setViewportScale, goToPage, setObjectToPlace])
+  }, [setViewportScale, goToPage, setObjectToPlace, getObjects])
 
   useEffect(() => {
     window.pdfview = actions

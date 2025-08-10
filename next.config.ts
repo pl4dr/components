@@ -19,6 +19,8 @@ const nextConfig: NextConfig = {
     config.externals = [...config.externals, { canvas: 'canvas' }]
     return config
   },
+
+  serverExternalPackages: ['ts-morph'],
 }
 
 export default withMDX(nextConfig)
