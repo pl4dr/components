@@ -34,6 +34,7 @@ function PDFView<ContainerRef extends HTMLElement>(props: {
   src: string
   containerRef: React.RefObject<ContainerRef | null>
 
+  onObjectPlaced?: (pageNumber: number, object: Object) => void
   RenderObject?: React.ComponentType<{
     object: Object
     remove: () => void
@@ -309,6 +310,7 @@ function PDFView<ContainerRef extends HTMLElement>(props: {
               pageNumber={pageNumber}
               dimensions={dimensions}
               position={position}
+              onObjectPlaced={props.onObjectPlaced}
               RenderObject={props.RenderObject}
             />
           )
@@ -347,6 +349,7 @@ function PDFPage(props: {
     y: number
   }
 
+  onObjectPlaced?: (pageNumber: number, object: Object) => void
   RenderObject?: React.ComponentType<{
     object: Object
     remove: () => void
@@ -432,6 +435,8 @@ function PDFPage(props: {
         selectedObjectKey: newObject.id,
       }))
     }, 100)
+
+    props.onObjectPlaced?.(props.pageNumber, newObject)
   }
 
   return (
