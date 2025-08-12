@@ -14,7 +14,7 @@ const geistMono = Geist_Mono({
 })
 
 export const metadata: Metadata = {
-  title: 'PL4DR Components',
+  title: 'SATS Components',
 }
 
 export default function RootLayout({

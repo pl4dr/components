@@ -1,7 +1,7 @@
 {
   "$schema": "https://ui.shadcn.com/schema/registry.json",
-  "name": "PL4DR Components",
-  "homepage": "https://github.com/pl4dr/components",
+  "name": "SATS Components",
+  "homepage": "https://sats-lab.github.io/components",
   "items": [
     {
       "name": "pdfview",
